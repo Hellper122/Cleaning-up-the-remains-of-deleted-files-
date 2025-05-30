@@ -1,0 +1,153 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+
+class Program
+{
+    static readonly string[] ExcludedDirs = new string[]
+    {
+        @"C:\Windows",
+        @"C:\Program Files",
+        @"C:\Program Files (x86)",
+        @"C:\ProgramData"
+    };
+
+    static void Main()
+    {
+        Console.WriteLine("Внимание! Вы используете приложение в Альфа-версии. Возможны баги и нестабильная работа.");
+        Console.WriteLine("Вы соглашаетесь использовать программу на этих условиях? (да/нет):");
+        string consent = Console.ReadLine()?.Trim().ToLower();
+
+        if (consent != "да")
+        {
+            Console.WriteLine("Использование программы отменено.");
+            return;
+        }
+
+        Console.WriteLine("Запуск сканирования...");
+
+        Stopwatch stopwatch = new Stopwatch();
+        stopwatch.Start();
+
+        List<FileInfo> problemFiles = new List<FileInfo>();
+        DriveInfo[] drives = DriveInfo.GetDrives();
+
+        foreach (var drive in drives)
+        {
+            if (!drive.IsReady) continue;
+
+            Console.WriteLine($"Сканирование диска {drive.Name}...");
+            try
+            {
+                ScanDirectory(drive.RootDirectory.FullName, problemFiles);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка при сканировании {drive.Name}: {ex.Message}");
+            }
+        }
+
+        stopwatch.Stop();
+
+        if (problemFiles.Count == 0)
+        {
+            Console.WriteLine("Проблемных файлов не найдено.");
+            Console.WriteLine($"Время сканирования: {stopwatch.Elapsed}");
+            return;
+        }
+
+        long totalSize = problemFiles.Sum(f => f.Length);
+
+        Console.WriteLine($"Найдено {problemFiles.Count} файлов, занимающих {totalSize / (1024 * 1024)} МБ.");
+        Console.WriteLine($"Время сканирования: {stopwatch.Elapsed}");
+
+        Console.Write("Удалить все найденные файлы? (да/нет): ");
+        string answer = Console.ReadLine();
+
+        if (answer?.ToLower() == "да")
+        {
+            foreach (var f in problemFiles)
+            {
+                try
+                {
+                    File.SetAttributes(f.FullName, FileAttributes.Normal);
+                    File.Delete(f.FullName);
+                    Console.WriteLine($"Удалён: {f.FullName}");
+                }
+                catch
+                {
+                    Console.WriteLine($"Не удалось удалить: {f.FullName}");
+                }
+            }
+            Console.WriteLine("Удаление завершено.");
+        }
+        else
+        {
+            Console.WriteLine("Удаление отменено.");
+        }
+    }
+
+    static void ScanDirectory(string path, List<FileInfo> problemFiles)
+    {
+        if (ExcludedDirs.Any(excluded => path.StartsWith(excluded, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        DirectoryInfo dirInfo;
+        try
+        {
+            dirInfo = new DirectoryInfo(path);
+        }
+        catch
+        {
+            return;
+        }
+
+        FileInfo[] files = null;
+        try
+        {
+            files = dirInfo.GetFiles();
+        }
+        catch
+        {
+            // Игнорируем ошибки доступа
+        }
+
+        if (files != null)
+        {
+            foreach (var file in files)
+            {
+                try
+                {
+                    if (file.Attributes.HasFlag(FileAttributes.System))
+                        continue;
+
+                    if (file.Attributes.HasFlag(FileAttributes.Hidden) || file.IsReadOnly)
+                    {
+                        problemFiles.Add(file);
+                    }
+                }
+                catch { }
+            }
+        }
+
+        DirectoryInfo[] subDirs = null;
+        try
+        {
+            subDirs = dirInfo.GetDirectories();
+        }
+        catch
+        {
+            // Игнорируем ошибки доступа
+        }
+
+        if (subDirs != null)
+        {
+            foreach (var subDir in subDirs)
+            {
+                ScanDirectory(subDir.FullName, problemFiles);
+            }
+        }
+    }
+}
